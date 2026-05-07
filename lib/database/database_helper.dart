@@ -1,9 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/tarefa.dart';
 
 class DatabaseHelper {
-  // Singleton
   static final DatabaseHelper instance = DatabaseHelper._internal();
   factory DatabaseHelper() => instance;
   DatabaseHelper._internal();
@@ -11,7 +11,7 @@ class DatabaseHelper {
   static Database? _database;
 
   static const _dbName = 'tarefas.db';
-  static const _dbVersion = 1;
+  static const _dbVersion = 2;
   static const _tableName = 'tarefas';
 
   Future<Database> get database async {
@@ -23,46 +23,57 @@ class DatabaseHelper {
   Future<Database> _initDatabase() async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, _dbName);
+    if (kDebugMode) print('[DB] abrindo banco em: $path');
 
     return await openDatabase(
       path,
       version: _dbVersion,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
   }
 
   Future<void> _onCreate(Database db, int version) async {
+    if (kDebugMode) print('[DB] onCreate() criando tabela...');
     await db.execute('''
       CREATE TABLE $_tableName (
-        id        INTEGER PRIMARY KEY AUTOINCREMENT,
-        titulo    TEXT    NOT NULL,
-        descricao TEXT    NOT NULL,
-        dataPrevista TEXT NOT NULL,
-        importante INTEGER NOT NULL DEFAULT 0,
-        realizada  INTEGER NOT NULL DEFAULT 0
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        titulo          TEXT    NOT NULL,
+        descricao       TEXT    NOT NULL,
+        dataPrevista    TEXT    NOT NULL,
+        importante      INTEGER NOT NULL DEFAULT 0,
+        realizada       INTEGER NOT NULL DEFAULT 0,
+        estimativaHoras REAL    NOT NULL DEFAULT 1.0
       )
     ''');
   }
 
-  // ── CREATE ──────────────────────────────────────────────────────────────────
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (kDebugMode) print('[DB] onUpgrade() $oldVersion → $newVersion');
+    if (oldVersion < 2) {
+      await db.execute(
+        'ALTER TABLE $_tableName ADD COLUMN estimativaHoras REAL NOT NULL DEFAULT 1.0',
+      );
+    }
+  }
 
   Future<int> inserir(Tarefa tarefa) async {
     final db = await database;
-    return await db.insert(
+    final map = tarefa.toMap()..remove('id');
+    if (kDebugMode) print('[DB] inserir() map=$map');
+    final id = await db.insert(
       _tableName,
-      tarefa.toMap()..remove('id'),
+      map,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+    if (kDebugMode) print('[DB] inserir() → id gerado=$id');
+    return id;
   }
-
-  // ── READ ────────────────────────────────────────────────────────────────────
 
   Future<List<Tarefa>> listarTodas() async {
     final db = await database;
-    final maps = await db.query(
-      _tableName,
-      orderBy: 'dataPrevista ASC',
-    );
+    final maps = await db.query(_tableName, orderBy: 'dataPrevista ASC');
+    if (kDebugMode) print('[DB] listarTodas() → ${maps.length} registros');
     return maps.map((m) => Tarefa.fromMap(m)).toList();
   }
 
@@ -78,8 +89,6 @@ class DatabaseHelper {
     return Tarefa.fromMap(maps.first);
   }
 
-  // ── UPDATE ──────────────────────────────────────────────────────────────────
-
   Future<int> atualizar(Tarefa tarefa) async {
     final db = await database;
     return await db.update(
@@ -90,7 +99,6 @@ class DatabaseHelper {
     );
   }
 
-  // Atualiza só o campo "realizada" (toggle rápido na lista)
   Future<int> alternarRealizada(int id, bool realizada) async {
     final db = await database;
     return await db.update(
@@ -101,14 +109,8 @@ class DatabaseHelper {
     );
   }
 
-  // ── DELETE ──────────────────────────────────────────────────────────────────
-
   Future<int> deletar(int id) async {
     final db = await database;
-    return await db.delete(
-      _tableName,
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    return await db.delete(_tableName, where: 'id = ?', whereArgs: [id]);
   }
 }

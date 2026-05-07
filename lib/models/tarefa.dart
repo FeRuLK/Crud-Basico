@@ -5,6 +5,7 @@ class Tarefa {
   DateTime dataPrevista;
   bool importante;
   bool realizada;
+  double estimativaHoras; // ← atributo extra: estimativa de tempo em horas
 
   Tarefa({
     this.id,
@@ -13,6 +14,7 @@ class Tarefa {
     required this.dataPrevista,
     this.importante = false,
     this.realizada = false,
+    this.estimativaHoras = 1.0,
   });
 
   /// Converte o objeto para um Map para ser salvo no SQLite.
@@ -24,6 +26,7 @@ class Tarefa {
       'dataPrevista': dataPrevista.toIso8601String(),
       'importante': importante ? 1 : 0,
       'realizada': realizada ? 1 : 0,
+      'estimativaHoras': estimativaHoras,
     };
   }
 
@@ -36,6 +39,7 @@ class Tarefa {
       dataPrevista: DateTime.parse(map['dataPrevista'] as String),
       importante: (map['importante'] as int) == 1,
       realizada: (map['realizada'] as int) == 1,
+      estimativaHoras: (map['estimativaHoras'] as num?)?.toDouble() ?? 1.0,
     );
   }
 
@@ -47,6 +51,7 @@ class Tarefa {
     DateTime? dataPrevista,
     bool? importante,
     bool? realizada,
+    double? estimativaHoras,
   }) {
     return Tarefa(
       id: id ?? this.id,
@@ -55,6 +60,7 @@ class Tarefa {
       dataPrevista: dataPrevista ?? this.dataPrevista,
       importante: importante ?? this.importante,
       realizada: realizada ?? this.realizada,
+      estimativaHoras: estimativaHoras ?? this.estimativaHoras,
     );
   }
 }

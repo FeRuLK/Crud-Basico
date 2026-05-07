@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../database/database_helper.dart';
+import 'package:provider/provider.dart';
 import '../models/tarefa.dart';
+import '../providers/tarefa_provider.dart';
 
 class TelaFormulario extends StatefulWidget {
   const TelaFormulario({super.key});
@@ -12,22 +13,20 @@ class TelaFormulario extends StatefulWidget {
 
 class _TelaFormularioState extends State<TelaFormulario> {
   final _formKey = GlobalKey<FormState>();
-  final _db = DatabaseHelper.instance;
 
   final _tituloController = TextEditingController();
   final _descricaoController = TextEditingController();
 
   DateTime _dataPrevista = DateTime.now().add(const Duration(days: 1));
   bool _importante = false;
-  bool _realizada = false;
+  double _estimativaHoras = 1.0;
 
-  Tarefa? _tarefaEdicao; // null = nova tarefa
+  Tarefa? _tarefaEdicao;
   bool _inicializado = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Recebe a tarefa via arguments (null = modo criação)
     if (!_inicializado) {
       _tarefaEdicao =
           ModalRoute.of(context)?.settings.arguments as Tarefa?;
@@ -36,7 +35,7 @@ class _TelaFormularioState extends State<TelaFormulario> {
         _descricaoController.text = _tarefaEdicao!.descricao;
         _dataPrevista = _tarefaEdicao!.dataPrevista;
         _importante = _tarefaEdicao!.importante;
-        _realizada = _tarefaEdicao!.realizada;
+        _estimativaHoras = _tarefaEdicao!.estimativaHoras;
       }
       _inicializado = true;
     }
@@ -57,37 +56,43 @@ class _TelaFormularioState extends State<TelaFormulario> {
       lastDate: DateTime(2100),
       locale: const Locale('pt', 'BR'),
     );
-    if (picked != null) {
-      setState(() => _dataPrevista = picked);
-    }
+    if (picked != null) setState(() => _dataPrevista = picked);
   }
 
   Future<void> _salvar() async {
     if (!_formKey.currentState!.validate()) return;
+    final provider = context.read<TarefaProvider>();
 
     if (_tarefaEdicao == null) {
-      // Criar nova
-      final nova = Tarefa(
+      await provider.inserir(Tarefa(
         titulo: _tituloController.text.trim(),
         descricao: _descricaoController.text.trim(),
         dataPrevista: _dataPrevista,
         importante: _importante,
-        realizada: _realizada,
-      );
-      await _db.inserir(nova);
+        estimativaHoras: _estimativaHoras,
+      ));
     } else {
-      // Atualizar existente
-      final atualizada = _tarefaEdicao!.copyWith(
+      await provider.atualizar(_tarefaEdicao!.copyWith(
         titulo: _tituloController.text.trim(),
         descricao: _descricaoController.text.trim(),
         dataPrevista: _dataPrevista,
         importante: _importante,
-        realizada: _realizada,
-      );
-      await _db.atualizar(atualizada);
+        estimativaHoras: _estimativaHoras,
+        // realizada NÃO é editável aqui — somente na tela de detalhes
+      ));
     }
 
     if (mounted) Navigator.pop(context);
+  }
+
+  String _formatarEstimativa(double horas) {
+    if (horas < 1) {
+      return '${(horas * 60).round()} min';
+    } else if (horas == horas.roundToDouble()) {
+      return '${horas.toInt()}h';
+    } else {
+      return '${horas.toStringAsFixed(1)}h';
+    }
   }
 
   @override
@@ -114,7 +119,6 @@ class _TelaFormularioState extends State<TelaFormulario> {
                 decoration: const InputDecoration(
                   labelText: 'Título *',
                   hintText: 'Ex: Comprar mantimentos',
-                  border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.title),
                 ),
                 textCapitalization: TextCapitalization.sentences,
@@ -136,7 +140,6 @@ class _TelaFormularioState extends State<TelaFormulario> {
                 decoration: const InputDecoration(
                   labelText: 'Descrição *',
                   hintText: 'Descreva a tarefa com detalhes...',
-                  border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.description),
                   alignLabelWithHint: true,
                 ),
@@ -158,7 +161,6 @@ class _TelaFormularioState extends State<TelaFormulario> {
                 child: InputDecorator(
                   decoration: const InputDecoration(
                     labelText: 'Data prevista *',
-                    border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.calendar_month),
                   ),
                   child: Row(
@@ -169,6 +171,67 @@ class _TelaFormularioState extends State<TelaFormulario> {
                         style: const TextStyle(fontSize: 16),
                       ),
                       const Icon(Icons.arrow_drop_down),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // ── Estimativa de tempo ──────────────────────────────────────
+              Card(
+                margin: EdgeInsets.zero,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.timer_outlined,
+                              size: 20, color: Colors.blueGrey),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Estimativa de tempo',
+                            style: TextStyle(fontWeight: FontWeight.w500),
+                          ),
+                          const Spacer(),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              _formatarEstimativa(_estimativaHoras),
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: theme.colorScheme.onPrimaryContainer,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Slider(
+                        value: _estimativaHoras,
+                        min: 0.5,
+                        max: 24,
+                        divisions: 47,
+                        label: _formatarEstimativa(_estimativaHoras),
+                        onChanged: (v) =>
+                            setState(() => _estimativaHoras = v),
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: const [
+                          Text('30 min',
+                              style: TextStyle(
+                                  fontSize: 11, color: Colors.grey)),
+                          Text('24h',
+                              style: TextStyle(
+                                  fontSize: 11, color: Colors.grey)),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -187,24 +250,6 @@ class _TelaFormularioState extends State<TelaFormulario> {
                   ),
                   value: _importante,
                   onChanged: (v) => setState(() => _importante = v),
-                ),
-              ),
-              const SizedBox(height: 8),
-
-              // ── Realizada ────────────────────────────────────────────────
-              Card(
-                margin: EdgeInsets.zero,
-                child: SwitchListTile(
-                  title: const Text('Marcar como realizada'),
-                  subtitle: const Text('A tarefa será exibida como concluída'),
-                  secondary: Icon(
-                    _realizada
-                        ? Icons.check_circle
-                        : Icons.check_circle_outline,
-                    color: _realizada ? Colors.green : Colors.grey,
-                  ),
-                  value: _realizada,
-                  onChanged: (v) => setState(() => _realizada = v),
                 ),
               ),
               const SizedBox(height: 24),

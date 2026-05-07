@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-import '../database/database_helper.dart';
+import 'package:provider/provider.dart';
 import '../models/tarefa.dart';
+import '../providers/tarefa_provider.dart';
 import '../rotas.dart';
+import '../widgets/tarefa_card.dart';
 
 class TelaLista extends StatefulWidget {
   const TelaLista({super.key});
@@ -11,32 +12,34 @@ class TelaLista extends StatefulWidget {
   State<TelaLista> createState() => _TelaListaState();
 }
 
-class _TelaListaState extends State<TelaLista> {
-  final _db = DatabaseHelper.instance;
-  List<Tarefa> _tarefas = [];
-  bool _carregando = true;
+class _TelaListaState extends State<TelaLista>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+
+  final _abas = const [
+    Tab(icon: Icon(Icons.list), text: 'Todas'),
+    Tab(icon: Icon(Icons.star), text: 'Importantes'),
+    Tab(icon: Icon(Icons.check_circle), text: 'Realizadas'),
+    Tab(icon: Icon(Icons.warning), text: 'Atrasadas'),
+  ];
 
   @override
   void initState() {
     super.initState();
-    _carregarTarefas();
-  }
-
-  Future<void> _carregarTarefas() async {
-    setState(() => _carregando = true);
-    final lista = await _db.listarTodas();
-    setState(() {
-      _tarefas = lista;
-      _carregando = false;
+    _tabController = TabController(length: _abas.length, vsync: this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<TarefaProvider>().carregar();
     });
   }
 
-  Future<void> _toggleRealizada(Tarefa tarefa) async {
-    await _db.alternarRealizada(tarefa.id!, !tarefa.realizada);
-    await _carregarTarefas();
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
-  Future<void> _deletarTarefa(Tarefa tarefa) async {
+  Future<void> _confirmarDeletar(
+      BuildContext context, TarefaProvider provider, Tarefa tarefa) async {
     final confirmar = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -56,9 +59,8 @@ class _TelaListaState extends State<TelaLista> {
       ),
     );
     if (confirmar == true) {
-      await _db.deletar(tarefa.id!);
-      await _carregarTarefas();
-      if (mounted) {
+      await provider.deletar(tarefa.id!);
+      if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Tarefa "${tarefa.titulo}" excluída.'),
@@ -67,24 +69,6 @@ class _TelaListaState extends State<TelaLista> {
         );
       }
     }
-  }
-
-  Future<void> _abrirFormulario({Tarefa? tarefa}) async {
-    await Navigator.pushNamed(
-      context,
-      Rotas.formulario,
-      arguments: tarefa,
-    );
-    await _carregarTarefas();
-  }
-
-  Future<void> _abrirDetalhe(Tarefa tarefa) async {
-    await Navigator.pushNamed(
-      context,
-      Rotas.detalhe,
-      arguments: tarefa,
-    );
-    await _carregarTarefas();
   }
 
   @override
@@ -100,173 +84,133 @@ class _TelaListaState extends State<TelaLista> {
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Atualizar',
-            onPressed: _carregarTarefas,
+            onPressed: () => context.read<TarefaProvider>().carregar(),
           ),
         ],
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: _abas,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white54,
+          indicatorColor: Colors.white,
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
+        ),
       ),
-      body: _carregando
-          ? const Center(child: CircularProgressIndicator())
-          : _tarefas.isEmpty
-              ? _buildEmptyState()
-              : _buildLista(),
+      body: Consumer<TarefaProvider>(
+        builder: (context, provider, _) {
+          if (provider.carregando) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          return TabBarView(
+            controller: _tabController,
+            children: [
+              _ListaFiltrada(
+                tarefas: provider.tarefas,
+                onToggle: provider.alternarRealizada,
+                onDeletar: (t) => _confirmarDeletar(context, provider, t),
+              ),
+              _ListaFiltrada(
+                tarefas: provider.importantes,
+                emptyMsg: 'Nenhuma tarefa importante.',
+                onToggle: provider.alternarRealizada,
+                onDeletar: (t) => _confirmarDeletar(context, provider, t),
+              ),
+              _ListaFiltrada(
+                tarefas: provider.realizadas,
+                emptyMsg: 'Nenhuma tarefa realizada.',
+                onToggle: provider.alternarRealizada,
+                onDeletar: (t) => _confirmarDeletar(context, provider, t),
+              ),
+              _ListaFiltrada(
+                tarefas: provider.atrasadas,
+                emptyMsg: 'Nenhuma tarefa atrasada. 🎉',
+                onToggle: provider.alternarRealizada,
+                onDeletar: (t) => _confirmarDeletar(context, provider, t),
+              ),
+            ],
+          );
+        },
+      ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _abrirFormulario(),
+        onPressed: () async {
+          await Navigator.pushNamed(context, Rotas.formulario);
+          // ignore: use_build_context_synchronously
+          context.read<TarefaProvider>().carregar();
+        },
         icon: const Icon(Icons.add),
         label: const Text('Nova tarefa'),
       ),
     );
   }
-
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.check_circle_outline,
-              size: 80, color: Colors.grey.shade400),
-          const SizedBox(height: 16),
-          Text(
-            'Nenhuma tarefa cadastrada!',
-            style: TextStyle(fontSize: 18, color: Colors.grey.shade600),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Toque em "Nova tarefa" para começar.',
-            style: TextStyle(color: Colors.grey.shade500),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLista() {
-    return ListView.separated(
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-      itemCount: _tarefas.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 4),
-      itemBuilder: (context, index) {
-        final tarefa = _tarefas[index];
-        return _TarefaCard(
-          tarefa: tarefa,
-          onTap: () => _abrirDetalhe(tarefa),
-          onToggle: () => _toggleRealizada(tarefa),
-          onEditar: () => _abrirFormulario(tarefa: tarefa),
-          onDeletar: () => _deletarTarefa(tarefa),
-        );
-      },
-    );
-  }
 }
 
-// ── Card individual da tarefa ─────────────────────────────────────────────────
+// ── Lista filtrada reutilizável ───────────────────────────────────────────────
 
-class _TarefaCard extends StatelessWidget {
-  final Tarefa tarefa;
-  final VoidCallback onTap;
-  final VoidCallback onToggle;
-  final VoidCallback onEditar;
-  final VoidCallback onDeletar;
+class _ListaFiltrada extends StatelessWidget {
+  final List<Tarefa> tarefas;
+  final String emptyMsg;
+  final Future<void> Function(Tarefa) onToggle;
+  final void Function(Tarefa) onDeletar;
 
-  const _TarefaCard({
-    required this.tarefa,
-    required this.onTap,
+  const _ListaFiltrada({
+    required this.tarefas,
+    this.emptyMsg = 'Nenhuma tarefa cadastrada.',
     required this.onToggle,
-    required this.onEditar,
     required this.onDeletar,
   });
 
   @override
   Widget build(BuildContext context) {
-    final dataFormatada =
-        DateFormat('dd/MM/yyyy').format(tarefa.dataPrevista);
-    final atrasada = !tarefa.realizada &&
-        tarefa.dataPrevista.isBefore(DateTime.now());
+    if (tarefas.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.check_circle_outline,
+                size: 72, color: Colors.grey.shade300),
+            const SizedBox(height: 16),
+            Text(emptyMsg,
+                style:
+                    TextStyle(fontSize: 16, color: Colors.grey.shade500)),
+          ],
+        ),
+      );
+    }
 
-    return Card(
-      elevation: tarefa.realizada ? 0 : 2,
-      color: tarefa.realizada ? Colors.grey.shade100 : null,
-      child: ListTile(
-        onTap: onTap,
-        leading: Checkbox(
-          value: tarefa.realizada,
-          onChanged: (_) => onToggle(),
-          activeColor: Colors.green,
-        ),
-        title: Row(
-          children: [
-            if (tarefa.importante)
-              const Padding(
-                padding: EdgeInsets.only(right: 4),
-                child: Icon(Icons.star, color: Colors.amber, size: 16),
-              ),
-            Expanded(
-              child: Text(
-                tarefa.titulo,
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  decoration:
-                      tarefa.realizada ? TextDecoration.lineThrough : null,
-                  color: tarefa.realizada ? Colors.grey : null,
-                ),
-              ),
-            ),
-          ],
-        ),
-        subtitle: Row(
-          children: [
-            Icon(
-              Icons.calendar_today,
-              size: 12,
-              color: atrasada ? Colors.red : Colors.grey,
-            ),
-            const SizedBox(width: 4),
-            Text(
-              dataFormatada,
-              style: TextStyle(
-                fontSize: 12,
-                color: atrasada ? Colors.red : Colors.grey.shade600,
-                fontWeight:
-                    atrasada ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
-            if (atrasada) ...[
-              const SizedBox(width: 4),
-              const Text(
-                '(atrasada)',
-                style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.red,
-                    fontStyle: FontStyle.italic),
-              ),
-            ],
-          ],
-        ),
-        trailing: PopupMenuButton<String>(
-          onSelected: (value) {
-            if (value == 'editar') onEditar();
-            if (value == 'deletar') onDeletar();
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+      itemCount: tarefas.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 4),
+      itemBuilder: (context, index) {
+        final tarefa = tarefas[index];
+        return TarefaCard(
+          tarefa: tarefa,
+          onTap: () async {
+            await Navigator.pushNamed(
+              context,
+              Rotas.detalhe,
+              arguments: tarefa,
+            );
+            if (context.mounted) {
+              context.read<TarefaProvider>().carregar();
+            }
           },
-          itemBuilder: (_) => [
-            const PopupMenuItem(
-              value: 'editar',
-              child: ListTile(
-                leading: Icon(Icons.edit),
-                title: Text('Editar'),
-                dense: true,
-              ),
-            ),
-            const PopupMenuItem(
-              value: 'deletar',
-              child: ListTile(
-                leading: Icon(Icons.delete, color: Colors.red),
-                title:
-                    Text('Excluir', style: TextStyle(color: Colors.red)),
-                dense: true,
-              ),
-            ),
-          ],
-        ),
-      ),
+          onToggle: () => onToggle(tarefa),
+          onEditar: () async {
+            await Navigator.pushNamed(
+              context,
+              Rotas.formulario,
+              arguments: tarefa,
+            );
+            if (context.mounted) {
+              context.read<TarefaProvider>().carregar();
+            }
+          },
+          onDeletar: () => onDeletar(tarefa),
+        );
+      },
     );
   }
 }
